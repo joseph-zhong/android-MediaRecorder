@@ -24,8 +24,11 @@ import android.media.MediaRecorder;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.annotation.Size;
 import android.util.Log;
 import android.view.Menu;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
 import android.widget.Button;
@@ -41,24 +44,26 @@ import java.util.List;
  *  A {@link android.view.TextureView} is used as the camera preview which limits the code to API 14+. This
  *  can be easily replaced with a {@link android.view.SurfaceView} to run on older devices.
  */
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     private Camera mCamera;
-    private TextureView mPreview;
+    private SurfaceView mPreview;
     private MediaRecorder mMediaRecorder;
     private File mOutputFile;
 
     private boolean isRecording = false;
     private static final String TAG = "Recorder";
     private Button captureButton;
+    private SurfaceHolder mHolder;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.sample_main);
 
-        mPreview = (TextureView) findViewById(R.id.surface_view);
+        mPreview = (SurfaceView) findViewById(R.id.surface_view);
         captureButton = (Button) findViewById(R.id.button_capture);
+        preparePreview();
     }
 
     /**
@@ -74,10 +79,11 @@ public class MainActivity extends Activity {
 
             // stop recording and release camera
             try {
+                Log.i(TAG, "Stopping Capture");
                 mMediaRecorder.stop();  // stop the recording
             } catch (RuntimeException e) {
                 // RuntimeException is thrown when stop() is called immediately after start().
-                // In this case the output file is not properly constructed ans should be deleted.
+                // In this case the output file is not properly constructed and should be deleted.
                 Log.d(TAG, "RuntimeException: stop() is called immediately after start()");
                 //noinspection ResultOfMethodCallIgnored
                 mOutputFile.delete();
@@ -90,7 +96,8 @@ public class MainActivity extends Activity {
             isRecording = false;
             releaseCamera();
             // END_INCLUDE(stop_release_media_recorder)
-
+            Log.i(TAG, "Starting new Camera Preview");
+            preparePreview();
         } else {
 
             // BEGIN_INCLUDE(prepare_start_media_recorder)
@@ -136,9 +143,8 @@ public class MainActivity extends Activity {
         }
     }
 
-    @TargetApi(Build.VERSION_CODES.HONEYCOMB)
-    private boolean prepareVideoRecorder(){
-
+    private boolean preparePreview() {
+        Log.i(TAG, "Preparing Camera Preview");
         // BEGIN_INCLUDE (configure_preview)
         mCamera = CameraHelper.getDefaultCameraInstance();
 
@@ -160,15 +166,31 @@ public class MainActivity extends Activity {
         parameters.setPreviewSize(profile.videoFrameWidth, profile.videoFrameHeight);
         mCamera.setParameters(parameters);
         try {
-                // Requires API level 11+, For backward compatibility use {@link setPreviewDisplay}
-                // with {@link SurfaceView}
-                mCamera.setPreviewTexture(mPreview.getSurfaceTexture());
+            // Requires API level 11+, For backward compatibility use {@link setPreviewDisplay}
+            // with {@link SurfaceView}
+//                mCamera.setPreviewTexture(mPreview.getSurfaceTexture());
+
+            mHolder = mPreview.getHolder();
+            mHolder.addCallback(this);
+            mHolder.setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS);
+//            mHolder.setKeepScreenOn(true);
+            mCamera.setPreviewDisplay(mPreview.getHolder());
+            mCamera.startPreview();
+            Log.i(TAG, "Setting Preview Display");
         } catch (IOException e) {
             Log.e(TAG, "Surface texture is unavailable or unsuitable" + e.getMessage());
             return false;
         }
         // END_INCLUDE (configure_preview)
+        return true;
+    }
 
+    @TargetApi(Build.VERSION_CODES.HONEYCOMB)
+    private boolean prepareVideoRecorder(){
+        if (!preparePreview()) {
+            return false;
+        }
+        CamcorderProfile profile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
 
         // BEGIN_INCLUDE (configure_media_recorder)
         mMediaRecorder = new MediaRecorder();
@@ -207,6 +229,51 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    @Override
+    public void surfaceCreated(SurfaceHolder surfaceHolder) {
+        try {
+            if (mCamera != null) {
+                mCamera.setPreviewDisplay(mHolder);
+            }
+        }
+        catch (IOException exception) {
+            Log.e(TAG, "IOException caused by setPreviewDisplay()", exception);
+        }
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder surfaceHolder, int i, int i1, int i2) {
+        if (mCamera != null) {
+            // We need to make sure that our preview and recording video size are supported by the
+            // camera. Query camera to find all the sizes and choose the optimal size given the
+            // dimensions of our preview surface.
+            Camera.Parameters parameters = mCamera.getParameters();
+            List<Camera.Size> mSupportedPreviewSizes = parameters.getSupportedPreviewSizes();
+            List<Camera.Size> mSupportedVideoSizes = parameters.getSupportedVideoSizes();
+            Camera.Size optimalSize = CameraHelper.getOptimalVideoSize(mSupportedVideoSizes,
+                    mSupportedPreviewSizes, mPreview.getWidth(), mPreview.getHeight());
+
+            // Use the same size for recording profile.
+            CamcorderProfile profile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
+            profile.videoFrameWidth = optimalSize.width;
+            profile.videoFrameHeight = optimalSize.height;
+
+            // likewise for the camera object itself.
+            parameters.setPreviewSize(profile.videoFrameWidth, profile.videoFrameHeight);
+            mCamera.setParameters(parameters);
+            mCamera.startPreview();
+        }
+    }
+
+    @Override
+    public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
+        try {
+            releaseCamera();
+        } catch (Exception e) {
+            Log.e(TAG, "Camera release failure.");
+        }
+    }
+
     /**
      * Asynchronous task for preparing the {@link android.media.MediaRecorder} since it's a long blocking
      * operation.
@@ -237,7 +304,6 @@ public class MainActivity extends Activity {
             }
             // inform the user that recording has started
             setCaptureButtonText("Stop");
-
         }
     }
 
