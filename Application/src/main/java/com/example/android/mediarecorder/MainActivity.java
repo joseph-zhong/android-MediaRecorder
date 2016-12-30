@@ -16,9 +16,11 @@
 
 package com.example.android.mediarecorder;
 
+import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.Camera;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
@@ -29,6 +31,8 @@ import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.Size;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import android.util.SparseIntArray;
 import android.view.Menu;
@@ -38,11 +42,14 @@ import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
 import android.widget.Button;
+import android.widget.Toast;
 
 import com.example.android.common.media.CameraHelper;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -50,8 +57,9 @@ import java.util.List;
  *  A {@link android.view.TextureView} is used as the camera preview which limits the code to API 14+. This
  *  can be easily replaced with a {@link android.view.SurfaceView} to run on older devices.
  */
-public class MainActivity extends Activity implements SurfaceHolder.Callback {
+public class MainActivity extends Activity implements SurfaceHolder.Callback, ActivityCompat.OnRequestPermissionsResultCallback {
 
+    private static final int REQUEST_ALL_PERMISSIONS = 1;
     private Camera mCamera;
     private SurfaceView mPreview;
     private MediaRecorder mMediaRecorder;
@@ -90,7 +98,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
         mPreview = (SurfaceView) findViewById(R.id.surface_view);
         captureButton = (Button) findViewById(R.id.button_capture);
-        preparePreview();
+        if (checkForPermissions()) {
+            preparePreview();
+        }
     }
 
     /**
@@ -106,13 +116,16 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             // BEGIN_INCLUDE(stop_release_media_recorder)
 
             // stop recording and release camera
+            Toast.makeText(this, "Stopping Capture", Toast.LENGTH_SHORT).show();
             try {
                 Log.i(TAG, "Stopping Capture");
                 mMediaRecorder.stop();  // stop the recording
+                Toast.makeText(this, "Saving file: " + mOutputFile, Toast.LENGTH_SHORT).show();
             } catch (RuntimeException e) {
                 // RuntimeException is thrown when stop() is called immediately after start().
                 // In this case the output file is not properly constructed and should be deleted.
                 Log.d(TAG, "RuntimeException: stop() is called immediately after start()");
+                Toast.makeText(this, "Failed to save video", Toast.LENGTH_SHORT).show();
                 //noinspection ResultOfMethodCallIgnored
                 mOutputFile.delete();
             }
@@ -153,7 +166,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private void releaseMediaRecorder(){
         if (mMediaRecorder != null) {
             // clear recorder configuration
-            mMediaRecorder.reset();
+                mMediaRecorder.reset();
             // release the recorder object
             mMediaRecorder.release();
             mMediaRecorder = null;
@@ -248,6 +261,18 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
         // Step 3: Set a CamcorderProfile (requires API Level 8 or higher)
         mMediaRecorder.setProfile(profile);
+
+        // orientation
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+        Log.i("TESTING", "Sensor Orientation: " + sensorOrientation);
+        if (sensorOrientation == SENSOR_ORIENTATION_DEFAULT_DEGREES) {
+            Log.i("TESTING", "Recorder: DEFAULT ROTATION: " + DEFAULT_ORIENTATIONS.get(rotation));
+            mMediaRecorder.setOrientationHint(DEFAULT_ORIENTATIONS.get(rotation));
+        }
+        else {
+            Log.i("TESTING", "Recorder: INVERSING ROTATION: " + INVERSE_ORIENTATIONS.get(rotation));
+            mMediaRecorder.setOrientationHint(INVERSE_ORIENTATIONS.get(rotation));
+        }
 
         // Step 4: Set output file
         mOutputFile = CameraHelper.getOutputMediaFile(CameraHelper.MEDIA_TYPE_VIDEO);
@@ -392,4 +417,49 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    public boolean checkForPermissions() {
+        ArrayList<String> permissionsToGrant = new ArrayList<>();
+
+        // "Dangerous" Permissions:
+        // http://stackoverflow.com/questions/36936914/list-of-android-permissions-normal-permissions-and-dangerous-permissions-in-api
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToGrant.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+            } else {
+                Log.v("VERBOSE", "External storage permission is granted");
+            }
+            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToGrant.add(Manifest.permission.CAMERA);
+            }
+            else {
+                Log.v("VERBOSE", "Camera Permission granted");
+            }
+        }
+        // permission is automatically granted on sdk<23 upon installation
+        Log.v("VERBOSE", "External storage permission is automatically granted");
+
+        if (permissionsToGrant.size() > 0) {
+            ActivityCompat.requestPermissions(MainActivity.this, permissionsToGrant.toArray(new String[permissionsToGrant.size()]), REQUEST_ALL_PERMISSIONS);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
+        Log.i("TESTING", "onRequestPermissions Called");
+        switch (requestCode) {
+            case REQUEST_ALL_PERMISSIONS: {
+                Log.i("TESTING", "Permissions granted: Loading...");
+                Toast.makeText(this, "Permissions granted: Loading...", Toast.LENGTH_SHORT).show();
+                preparePreview();
+                return;
+            }
+            default: {
+                Log.e("ERROR", "Permissions denied: Cannot load UI");
+                Toast.makeText(this, "Permissions denied: Cannot load UI", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+    }
 }
