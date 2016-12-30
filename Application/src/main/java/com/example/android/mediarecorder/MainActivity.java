@@ -18,7 +18,11 @@ package com.example.android.mediarecorder;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.content.Context;
 import android.hardware.Camera;
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
 import android.os.AsyncTask;
@@ -26,7 +30,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.Size;
 import android.util.Log;
+import android.util.SparseIntArray;
 import android.view.Menu;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.TextureView;
@@ -55,6 +61,27 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final String TAG = "Recorder";
     private Button captureButton;
     private SurfaceHolder mHolder;
+    private int sensorOrientation;
+    private static final int SENSOR_ORIENTATION_DEFAULT_DEGREES = 90;
+    private static final int SENSOR_ORIENTATION_INVERSE_DEGREES = 270;
+    private static final SparseIntArray DEFAULT_ORIENTATIONS = new SparseIntArray();
+    private static final SparseIntArray INVERSE_ORIENTATIONS = new SparseIntArray();
+
+    static {
+        DEFAULT_ORIENTATIONS.append(Surface.ROTATION_0, 90);
+        DEFAULT_ORIENTATIONS.append(Surface.ROTATION_90, 0);
+        DEFAULT_ORIENTATIONS.append(Surface.ROTATION_180, 270);
+        DEFAULT_ORIENTATIONS.append(Surface.ROTATION_270, 180);
+    }
+
+    static {
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_0, 270);
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_90, 180);
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_180, 90);
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_270, 0);
+    }
+
+    private int orientation;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,6 +101,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
      * @param view the view generating the event.
      */
     public void onCaptureClick(View view) {
+        Log.i(TAG, "ON CAPTURE CLICK ");
         if (isRecording) {
             // BEGIN_INCLUDE(stop_release_media_recorder)
 
@@ -144,6 +172,19 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     private boolean preparePreview() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+                String id = manager.getCameraIdList()[0];
+                CameraCharacteristics characteristics = manager.getCameraCharacteristics(id);
+                sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            }
+            catch (CameraAccessException e) {
+                Log.e("ERROR", "Cannot access Camera2 API");
+                e.printStackTrace();
+            }
+        }
+
         Log.i(TAG, "Preparing Camera Preview");
         // BEGIN_INCLUDE (configure_preview)
         mCamera = CameraHelper.getDefaultCameraInstance();
@@ -174,6 +215,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             mHolder.addCallback(this);
             mHolder.setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS);
 //            mHolder.setKeepScreenOn(true);
+
+            setCameraDisplayOrientation(0);
             mCamera.setPreviewDisplay(mPreview.getHolder());
             mCamera.startPreview();
             Log.i(TAG, "Setting Preview Display");
@@ -243,25 +286,31 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     public void surfaceChanged(SurfaceHolder surfaceHolder, int i, int i1, int i2) {
-        if (mCamera != null) {
-            // We need to make sure that our preview and recording video size are supported by the
-            // camera. Query camera to find all the sizes and choose the optimal size given the
-            // dimensions of our preview surface.
-            Camera.Parameters parameters = mCamera.getParameters();
-            List<Camera.Size> mSupportedPreviewSizes = parameters.getSupportedPreviewSizes();
-            List<Camera.Size> mSupportedVideoSizes = parameters.getSupportedVideoSizes();
-            Camera.Size optimalSize = CameraHelper.getOptimalVideoSize(mSupportedVideoSizes,
-                    mSupportedPreviewSizes, mPreview.getWidth(), mPreview.getHeight());
+        Log.i("TESTING", "Surface changed called");
 
-            // Use the same size for recording profile.
-            CamcorderProfile profile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
-            profile.videoFrameWidth = optimalSize.width;
-            profile.videoFrameHeight = optimalSize.height;
+        // If your preview can change or rotate, take care of those events here.
+        // Make sure to stop the preview before resizing or reformatting it.
+        if (mHolder.getSurface() == null){
+            Log.e("ERROR", "Preview Surface does not exist!");
+            return;
+        }
 
-            // likewise for the camera object itself.
-            parameters.setPreviewSize(profile.videoFrameWidth, profile.videoFrameHeight);
-            mCamera.setParameters(parameters);
+        // stop preview before making changes
+        try {
+            mCamera.stopPreview();
+        } catch (Exception e){
+            Log.e("ERROR", "Tried to stop a non-existent preview!");
+        }
+
+        // set preview size and make any resize, rotate or
+        // reformatting changes here
+
+        // start preview with new settings
+        try {
+            mCamera.setPreviewDisplay(mHolder);
             mCamera.startPreview();
+        } catch (Exception e) {
+            Log.d("ERROR", "Error starting mCamera preview: " + e.getMessage());
         }
     }
 
@@ -274,12 +323,48 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    public void setCameraDisplayOrientation(int cameraId) {
+        Log.i("TESTING", "Set Camera Display Orientation Called");
+        android.hardware.Camera.CameraInfo info = new android.hardware.Camera.CameraInfo();
+        android.hardware.Camera.getCameraInfo(cameraId, info);
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+
+        Log.i("TESTING", "Screen Rotation: " + rotation);
+        Log.i("TESTING", "Sensor Orientation: " + sensorOrientation);
+        if (sensorOrientation == SENSOR_ORIENTATION_DEFAULT_DEGREES) {
+            Log.i("TESTING", "Camera: DEFAULT ROTATION: " + DEFAULT_ORIENTATIONS.get(rotation));
+
+            int degrees = 0;
+            switch (rotation) {
+                case Surface.ROTATION_0: degrees = 0; break;
+                case Surface.ROTATION_90: degrees = 90; break;
+                case Surface.ROTATION_180: degrees = 180; break;
+                case Surface.ROTATION_270: degrees = 270; break;
+            }
+
+            if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                orientation = (info.orientation + degrees) % 360;
+                orientation = (360 - orientation) % 360;  // compensate the mirror
+                Log.i("TESTING", "Front Facing Camera Orientation: " + orientation);
+            } else {  // back-facing
+                orientation = (info.orientation - degrees + 360) % 360;
+                Log.i("TESTING", "Back Facing Camera Orientation: " + orientation);
+            }
+            Log.i("TESTING", "Set Camera Display Orientation Finished");
+        }
+        else {
+            Log.i("TESTING", "Camera: INVERSING ROTATION: " + INVERSE_ORIENTATIONS.get(rotation));
+            orientation = INVERSE_ORIENTATIONS.get(rotation);
+        }
+        mCamera.setDisplayOrientation(orientation);
+    }
+
     /**
      * Asynchronous task for preparing the {@link android.media.MediaRecorder} since it's a long blocking
      * operation.
      */
-    class MediaPrepareTask extends AsyncTask<Void, Void, Boolean> {
 
+    class MediaPrepareTask extends AsyncTask<Void, Void, Boolean> {
         @Override
         protected Boolean doInBackground(Void... voids) {
             // initialize video camera
