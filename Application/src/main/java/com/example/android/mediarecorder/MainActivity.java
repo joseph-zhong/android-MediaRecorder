@@ -59,6 +59,12 @@ public class MainActivity extends Activity {
 
         mPreview = (TextureView) findViewById(R.id.surface_view);
         captureButton = (Button) findViewById(R.id.button_capture);
+        AsyncTask.execute(new Runnable() {
+            @Override
+            public void run() {
+                preparePreview();
+            }
+        });
     }
 
     /**
@@ -89,6 +95,7 @@ public class MainActivity extends Activity {
             setCaptureButtonText("Capture");
             isRecording = false;
             releaseCamera();
+            preparePreview();
             // END_INCLUDE(stop_release_media_recorder)
 
         } else {
@@ -136,9 +143,8 @@ public class MainActivity extends Activity {
         }
     }
 
-    @TargetApi(Build.VERSION_CODES.HONEYCOMB)
-    private boolean prepareVideoRecorder(){
-
+    private boolean preparePreview() {
+        Log.i(TAG, "Preparing Camera Preview");
         // BEGIN_INCLUDE (configure_preview)
         mCamera = CameraHelper.getDefaultCameraInstance();
 
@@ -160,15 +166,25 @@ public class MainActivity extends Activity {
         parameters.setPreviewSize(profile.videoFrameWidth, profile.videoFrameHeight);
         mCamera.setParameters(parameters);
         try {
-                // Requires API level 11+, For backward compatibility use {@link setPreviewDisplay}
-                // with {@link SurfaceView}
-                mCamera.setPreviewTexture(mPreview.getSurfaceTexture());
+            // Requires API level 11+, For backward compatibility use {@link setPreviewDisplay}
+            // with {@link SurfaceView}
+            mCamera.setPreviewTexture(mPreview.getSurfaceTexture());
+            mCamera.startPreview();
+            Log.i(TAG, "Setting Preview Display");
         } catch (IOException e) {
             Log.e(TAG, "Surface texture is unavailable or unsuitable" + e.getMessage());
             return false;
         }
         // END_INCLUDE (configure_preview)
+        return true;
+    }
 
+    @TargetApi(Build.VERSION_CODES.HONEYCOMB)
+    private boolean prepareVideoRecorder(){
+        if (!preparePreview()) {
+            return false;
+        }
+        CamcorderProfile profile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
 
         // BEGIN_INCLUDE (configure_media_recorder)
         mMediaRecorder = new MediaRecorder();
